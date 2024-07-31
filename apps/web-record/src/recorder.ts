@@ -14,6 +14,7 @@ export interface UserAction {
   time: number // 操作时间
   target?: HTMLElement // 操作目标元素
   data?: any // 其他操作数据
+  url?: string // 操作域名
   __drop__?: undefined | null | boolean // 是否将当前数据丢弃的标识
 }
 
@@ -38,6 +39,7 @@ export default class Recorder {
 
   // 通知观察者记录用户操作
   private notify(action: UserAction) {
+    action.url = window.location.href
     for (const observer of this.observers) {
       observer instanceof Function && observer(action)
     }

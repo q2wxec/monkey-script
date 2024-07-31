@@ -466,6 +466,93 @@ export default class WebObserver {
     })
   }
 
+  apiRequestObserver(){
+    // 保存原始的XMLHttpRequest.open方法
+    const originalOpen = XMLHttpRequest.prototype.open;
+    const originalSend = XMLHttpRequest.prototype.send;
+
+    // 重写open方法
+    XMLHttpRequest.prototype.open = function(method, url:string,async: boolean=true) {
+        // 调用原始的open方法
+        originalOpen.apply(this, [method, url,async]);
+        const recordData = {
+          url: url,
+          method: method
+        }
+        // 记录请求的URL和方法
+        this._recordData = recordData;
+        this.addEventListener("readystatechange", function() {
+          if(this.readyState === 4){
+            let recordData = this._recordData;
+            recordData['responseURL'] = this.responseURL;
+            recordData['response'] = this.response;
+            //console.log("apiRequestObserver:"+JSON.stringify(recordData));
+            const action = {
+              type: 'apiRequest',
+              time: Date.now(),
+              data: recordData,
+            }
+            recorder.record(action)
+          }
+      });
+
+    };
+
+    // 重写send方法以记录请求体
+    XMLHttpRequest.prototype.send = function(...args) {
+      console.log(`Request Payload: ${JSON.stringify(args)}`);
+      let recordData = this._recordData;
+      recordData['payload'] = JSON.stringify(args);
+      originalSend.apply(this, args);
+      // 如果是POST请求，记录请求体
+    };
+
+    //oldFetch保存了原fetch的引用
+    let oldFetch = fetch;
+    function hookFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+      // fetch需要返回一个promise，所以这里我们new一个Promise返回，
+      // 然后自行处理fetch的逻辑后resolve出去
+      return new Promise((resolve, reject) => {
+        // 这里我们使用fetch的原函数，
+        // 通过apply更改了this指针至自身，并且传入了参数
+        // 我们劫持函数的时候，
+        // 由劫持函数调用原函数的过程中一定要使用call/apply进行修改this指针，
+        // 以符合原来的调用过程。
+        // 在then中则是我们处理response的过程
+        oldFetch.apply(this, arguments).then((response) => {
+          console.log(`hookFetch Payload: ${JSON.stringify(arguments)}`);
+          // 这部分代码是针对某些特定的函数进行过滤，
+          // 我们可以对网页进行分析以及调试，
+          // 或去返回内容进行查看，来判断调用了哪些函数。
+          // 这里以json为例进行劫持，注意，如果你的网页未使用json函数可能导致劫持失败
+          // 首先保存了原json的引用
+          const oldJson = response.json;
+          // 修改json属性为一个劫持函数
+          response.json = function () {
+            // 由于json返回的是一个promise对象，
+            // 所以我们这里也需要返回一个promise
+            return new Promise((resolve, reject) => {
+              // 在promise内依对其原json函数进行调用，
+              // 并修改了this指向以及参数
+              // 最后对其结果进行一定的修改，
+              // 然后通过resolve(result)进行返回
+              oldJson.apply(this, arguments).then((result) => {
+                console.log(`hookFetch result: ${JSON.stringify(result)}`);
+                resolve(result);
+              });
+            });
+          };
+          resolve(response);
+        });
+      });
+    }
+    // 对window.fetch挂载成我们的劫持函数hookFetch
+    window.fetch = hookFetch;
+
+  }
+
+  
+
   isObserver() {
     return !this.disable
   }
@@ -482,8 +569,9 @@ export default class WebObserver {
     this.opts.mouse && this.mouseObserver(element)
     this.opts.touch && this.touchObserver(element)
     this.opts.scroll && this.scrollObserver(element)
-    this.opts.keyboard && this.keyboardObserver(element)
-
+    //this.opts.keyboard && this.keyboardObserver(element)
+    //注册xhr接口请求的观察函数 
+    this.apiRequestObserver()
     return this.hasRegistered
   }
 
